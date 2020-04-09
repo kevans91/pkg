@@ -80,6 +80,7 @@ scripts/sbin/pkg2ng
 /tests/checksum
 /tests/deps_formula
 /tests/frontend/Kyuafile
+/tests/frontend/abi
 /tests/frontend/add
 /tests/frontend/alias
 /tests/frontend/annotate
