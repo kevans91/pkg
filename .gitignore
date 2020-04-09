@@ -108,6 +108,7 @@ scripts/sbin/pkg2ng
 /tests/frontend/packagesplit
 /tests/frontend/php-pr
 /tests/frontend/pkg
+/tests/frontend/priority
 /tests/frontend/pubkey
 /tests/frontend/query
 /tests/frontend/register

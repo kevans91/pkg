@@ -23,6 +23,7 @@ atf_test_program{name='packagesplit'}
 atf_test_program{name='packagemerge'}
 atf_test_program{name='php-pr'}
 atf_test_program{name='pkg'}
+atf_test_program{name='priority'}
 atf_test_program{name='pubkey'}
 atf_test_program{name='query'}
 atf_test_program{name='register'}
