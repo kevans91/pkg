@@ -98,4 +98,6 @@ int pkgsign_verify(struct pkgsign_ctx *, const char *, unsigned char *, size_t,
 int pkgsign_verify_cert(struct pkgsign_ctx *, unsigned char *, size_t,
     unsigned char *, size_t, int);
 
+const char *pkgsign_impl_name(const struct pkgsign_ctx *);
+
 #endif

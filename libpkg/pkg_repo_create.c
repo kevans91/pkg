@@ -936,12 +936,27 @@ pkg_repo_pack_db(const char *name, const char *archive, char *path,
 		return (EPKG_FATAL);
 
 	if (sctx != NULL) {
+		const char *sigtype;
+
 		if (pkgsign_sign(sctx, path, &sigret, &signature_len) != EPKG_OK) {
 			ret = EPKG_FATAL;
 			goto out;
 		}
 
-		if (packing_append_buffer(pack, sigret, "signature", signature_len + 1) != EPKG_OK) {
+		/*
+		 * Legacy RSA traditionally included the NUL terminator in the
+		 * signature file.  Future implementations won't carry this
+		 * behavior on.
+		 */
+		sigtype = pkgsign_impl_name(sctx);
+		if (strcmp(sigtype, "rsa") == 0)
+			signature_len++;
+		if (packing_append_buffer(pack, sigret, "signature", signature_len) != EPKG_OK) {
+			ret = EPKG_FATAL;
+			goto out;
+		}
+
+		if (packing_append_buffer(pack, sigtype, "signature_type", strlen(sigtype)) != EPKG_OK) {
 			ret = EPKG_FATAL;
 			goto out;
 		}

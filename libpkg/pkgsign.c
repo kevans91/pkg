@@ -147,3 +147,10 @@ pkgsign_verify_cert(struct pkgsign_ctx *ctx, unsigned char *key, size_t keylen,
 	return (*ctx->impl->pi_ops->pkgsign_verify_cert)(ctx, key, keylen, sig,
 	    siglen, fd);
 }
+
+const char *
+pkgsign_impl_name(const struct pkgsign_ctx *ctx)
+{
+
+	return (ctx->impl->pi_name);
+}
