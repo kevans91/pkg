@@ -28,16 +28,25 @@
 
 #include <sys/stat.h>
 #include <sys/param.h>
+#include <sys/uio.h>
 
 #include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
 
+#include <openssl/bn.h>
 #include <openssl/err.h>
+#include <openssl/rand.h>
 #include <openssl/ssl.h>
 
 #include "pkg.h"
 #include "private/event.h"
 #include "private/pkg.h"
 #include "private/pkgsign.h"
+
+#define	OSSL_DEFAULT_CIPHER	NULL	/* No cipher. */
+#define	OSSL_DEFAULT_RSABITS	4096
+#define	OSSL_ENTROPY_BYTES	256
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 /*
@@ -88,6 +97,12 @@ _load_private_key(struct ossl_sign_ctx *keyinfo)
 	}
 
 	fclose(fp);
+
+	if (EVP_PKEY_id(keyinfo->key) != EVP_PKEY_RSA) {
+		keyinfo->key = NULL;
+		return (EPKG_FATAL);
+	}
+
 	return (EPKG_OK);
 }
 
@@ -114,6 +129,13 @@ _load_public_key_buf(unsigned char *cert, int certlen)
 	}
 
 	BIO_free(bp);
+
+	if (EVP_PKEY_id(pkey) != EVP_PKEY_RSA) {
+		EVP_PKEY_free(pkey);
+		pkg_emit_error("wrong key type, wanted 'rsa'");
+		return (NULL);
+	}
+
 	return (pkey);
 }
 
@@ -125,6 +147,111 @@ struct ossl_verify_cbdata {
 };
 
 static int
+ossl_verify_internal(EVP_PKEY *pkey, const char *hash, unsigned char *sig,
+    size_t siglen,
+    pkg_checksum_type_t ctype, const EVP_MD *digest)
+{
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	EVP_PKEY_CTX *ctx;
+#else
+	RSA *rsa;
+	unsigned int ssiglen;
+	int nid;
+#endif
+	int ret;
+
+	ret = 0;
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	assert(digest != NULL);
+
+	ctx = EVP_PKEY_CTX_new(pkey, NULL);
+	if (ctx == NULL) {
+		return (EPKG_FATAL);
+	}
+
+	if (EVP_PKEY_verify_init(ctx) <= 0) {
+		EVP_PKEY_CTX_free(ctx);
+		return (EPKG_FATAL);
+	}
+
+	if (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING) <= 0) {
+		EVP_PKEY_CTX_free(ctx);
+		return (EPKG_FATAL);
+	}
+
+	if (EVP_PKEY_CTX_set_signature_md(ctx, digest) <= 0) {
+		EVP_PKEY_CTX_free(ctx);
+		return (EPKG_FATAL);
+	}
+
+#ifndef NDEBUG
+	switch (ctype) {
+	case PKG_HASH_TYPE_SHA256_RAW:
+		assert(digest == EVP_sha256());
+		break;
+	case PKG_HASH_TYPE_SHA256_HEX:
+		assert(digest == EVP_md_pkg_sha1());
+		break;
+	default:
+		/* Unhandled */
+		break;
+	}
+#endif
+
+	ret = EVP_PKEY_verify(ctx, sig, siglen, hash,
+	    pkg_checksum_type_size(ctype));
+
+	EVP_PKEY_CTX_free(ctx);
+#else
+	rsa = EVP_PKEY_get1_RSA(pkey);
+
+	if (digest == EVP_sha1())
+		nid = NID_sha1;
+	else if (digest == EVP_sha256())
+		nid = NID_sha256;
+	else
+		/* Unreachable; rsa only used sha1 or sha256. */
+		assert(0);
+
+	ret = RSA_verify(nid, hash, pkg_checksum_type_size(ctype),
+	    sig, siglen, rsa);
+
+	RSA_free(rsa);
+
+	/* Translate to rough equivalent; error string has something. */
+	if (ret == 0)
+		ret = -1;
+#endif
+	return (ret);
+}
+
+static const EVP_MD *
+ossl_profile_digest(pkg_checksum_type_t ctype)
+{
+	const EVP_MD *digest;
+
+	digest = NULL;
+	switch (ctype) {
+	case PKG_HASH_TYPE_SHA256_RAW:
+		digest = EVP_sha256();
+		break;
+	case PKG_HASH_TYPE_SHA256_HEX:
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+		digest = EVP_md_pkg_sha1();
+#else
+		digest = EVP_sha1();
+#endif
+		break;
+	default:
+		/* Incomplete signer profile, or missing addition. */
+		assert(0);
+		break;
+	}
+
+	return (digest);
+}
+
+static int
 ossl_verify_cert_cb(int fd, void *ud)
 {
 	struct ossl_verify_cbdata *cbdata = ud;
@@ -132,7 +259,6 @@ ossl_verify_cert_cb(int fd, void *ud)
 	char *hash;
 	char errbuf[1024];
 	EVP_PKEY *pkey = NULL;
-	EVP_PKEY_CTX *ctx;
 	int ret;
 
 	sha256 = pkg_checksum_fd(fd, PKG_HASH_TYPE_SHA256_HEX);
@@ -149,42 +275,11 @@ ossl_verify_cert_cb(int fd, void *ud)
 		return (EPKG_FATAL);
 	}
 
-	if (EVP_PKEY_id(pkey) != EVP_PKEY_RSA) {
-		EVP_PKEY_free(pkey);
-		free(hash);
-		return (EPKG_FATAL);
-	}
+	ret = ossl_verify_internal(pkey, hash, cbdata->sig,
+	    cbdata->siglen, PKG_HASH_TYPE_SHA256_RAW,
+	    ossl_profile_digest(PKG_HASH_TYPE_SHA256_RAW));
 
-	ctx = EVP_PKEY_CTX_new(pkey, NULL);
-	if (ctx == NULL) {
-		EVP_PKEY_free(pkey);
-		free(hash);
-		return (EPKG_FATAL);
-	}
-
-	if (EVP_PKEY_verify_init(ctx) <= 0) {
-		EVP_PKEY_CTX_free(ctx);
-		EVP_PKEY_free(pkey);
-		free(hash);
-		return (EPKG_FATAL);
-	}
-
-	if (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING) <= 0) {
-		EVP_PKEY_CTX_free(ctx);
-		EVP_PKEY_free(pkey);
-		free(hash);
-		return (EPKG_FATAL);
-	}
-
-	if (EVP_PKEY_CTX_set_signature_md(ctx, EVP_sha256()) <= 0) {
-		EVP_PKEY_CTX_free(ctx);
-		EVP_PKEY_free(pkey);
-		free(hash);
-		return (EPKG_FATAL);
-	}
-
-	ret = EVP_PKEY_verify(ctx, cbdata->sig, cbdata->siglen, hash,
-	    pkg_checksum_type_size(PKG_HASH_TYPE_SHA256_RAW));
+	EVP_PKEY_free(pkey);
 	free(hash);
 	if (ret <= 0) {
 		if (ret < 0)
@@ -192,13 +287,8 @@ ossl_verify_cert_cb(int fd, void *ud)
 					ERR_error_string(ERR_get_error(), errbuf));
 		else
 			pkg_emit_error("rsa signature verification failure");
-		EVP_PKEY_CTX_free(ctx);
-		EVP_PKEY_free(pkey);
 		return (EPKG_FATAL);
 	}
-
-	EVP_PKEY_CTX_free(ctx);
-	EVP_PKEY_free(pkey);
 
 	return (EPKG_OK);
 }
@@ -236,11 +326,6 @@ ossl_verify_cb(int fd, void *ud)
 	char *sha256;
 	char errbuf[1024];
 	EVP_PKEY *pkey = NULL;
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-	EVP_PKEY_CTX *ctx;
-#else
-	RSA *rsa;
-#endif
 	int ret;
 
 	sha256 = pkg_checksum_fd(fd, PKG_HASH_TYPE_SHA256_HEX);
@@ -253,50 +338,11 @@ ossl_verify_cb(int fd, void *ud)
 		return (EPKG_FATAL);
 	}
 
-	if (EVP_PKEY_id(pkey) != EVP_PKEY_RSA) {
-		EVP_PKEY_free(pkey);
-		free(sha256);
-		return (EPKG_FATAL);
-	}
+	ret = ossl_verify_internal(pkey, sha256, cbdata->sig,
+	    cbdata->siglen, PKG_HASH_TYPE_SHA256_HEX,
+	    ossl_profile_digest(PKG_HASH_TYPE_SHA256_HEX));
 
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-	ctx = EVP_PKEY_CTX_new(pkey, NULL);
-	if (ctx == NULL) {
-		EVP_PKEY_free(pkey);
-		free(sha256);
-		return (EPKG_FATAL);
-	}
-
-	if (EVP_PKEY_verify_init(ctx) <= 0) {
-		EVP_PKEY_CTX_free(ctx);
-		EVP_PKEY_free(pkey);
-		free(sha256);
-		return (EPKG_FATAL);
-	}
-
-	if (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING) <= 0) {
-		EVP_PKEY_CTX_free(ctx);
-		EVP_PKEY_free(pkey);
-		free(sha256);
-		return (EPKG_FATAL);
-	}
-
-	if (EVP_PKEY_CTX_set_signature_md(ctx, EVP_md_pkg_sha1()) <= 0) {
-		EVP_PKEY_CTX_free(ctx);
-		EVP_PKEY_free(pkey);
-		free(sha256);
-		return (EPKG_FATAL);
-	}
-
-	ret = EVP_PKEY_verify(ctx, cbdata->sig, cbdata->siglen, sha256,
-	    pkg_checksum_type_size(PKG_HASH_TYPE_SHA256_HEX));
-#else
-	rsa = EVP_PKEY_get1_RSA(pkey);
-
-	ret = RSA_verify(NID_sha1, sha256,
-	    pkg_checksum_type_size(PKG_HASH_TYPE_SHA256_HEX), cbdata->sig,
-	    cbdata->siglen, rsa);
-#endif
+	EVP_PKEY_free(pkey);
 	free(sha256);
 	if (ret <= 0) {
 		if (ret < 0)
@@ -305,21 +351,8 @@ ossl_verify_cb(int fd, void *ud)
 		else
 			pkg_emit_error("%s: rsa signature verification failure",
 			    cbdata->key);
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-		EVP_PKEY_CTX_free(ctx);
-#else
-		RSA_free(rsa);
-#endif
-		EVP_PKEY_free(pkey);
 		return (EPKG_FATAL);
 	}
-
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-	EVP_PKEY_CTX_free(ctx);
-#else
-	RSA_free(rsa);
-#endif
-	EVP_PKEY_free(pkey);
 
 	return (EPKG_OK);
 }
@@ -410,7 +443,8 @@ ossl_sign(struct pkgsign_ctx *sctx, char *path, unsigned char **sigret,
 		return (EPKG_FATAL);
 	}
 
-	if (EVP_PKEY_CTX_set_signature_md(ctx, EVP_md_pkg_sha1()) <= 0) {
+	if (EVP_PKEY_CTX_set_signature_md(ctx,
+	    ossl_profile_digest(PKG_HASH_TYPE_SHA256_HEX)) <= 0) {
 		EVP_PKEY_CTX_free(ctx);
 		free(sha256);
 		return (EPKG_FATAL);
@@ -448,6 +482,245 @@ ossl_sign(struct pkgsign_ctx *sctx, char *path, unsigned char **sigret,
 	return (EPKG_OK);
 }
 
+/* Gratuitously snatched from OpenSSH sshd. */
+static int
+ossl_reseed(void)
+{
+	uint32_t rnd[OSSL_ENTROPY_BYTES];
+
+	RAND_poll();
+	arc4random_buf(rnd, sizeof(rnd));
+	RAND_seed(rnd, sizeof(rnd));
+
+	/* Ensure we sufficiently seeded it... */
+	if ((RAND_bytes((unsigned char *)rnd, 1)) != 1)
+		return (EPKG_FATAL);
+
+	explicit_bzero(rnd, sizeof(rnd));
+	return (EPKG_OK);
+}
+
+static int
+ossl_generate(struct pkgsign_ctx *sctx, const struct iovec *iov __unused,
+    int niov __unused)
+{
+	RSA *pkey = NULL;
+	BIGNUM *e = NULL;
+	BIO *keyout = NULL, *pubout = NULL;
+	const EVP_CIPHER *cipher = NULL;
+	const char *requested_cipher = OSSL_DEFAULT_CIPHER;
+	struct ossl_sign_ctx *keyinfo = OSSL_CTX(sctx);
+	char *keytmp, *pubpath, *pubtmp;
+	FILE *fp;
+	int bits, fd, rc;
+
+	rc = EPKG_OK;
+	if (ossl_reseed() != EPKG_OK) {
+		pkg_emit_error("failed to seed the PRNG");
+		return (EPKG_FATAL);
+	}
+
+	if (keyinfo->key != NULL) {
+		pkg_emit_error("cannot operate with a private key loaded");
+		return (EPKG_FATAL);
+	}
+
+	if (requested_cipher != NULL &&
+	    (cipher = EVP_get_cipherbyname(requested_cipher)) == NULL) {
+		pkg_emit_error("requested cipher '%s' not supported",
+		    requested_cipher);
+		return (EPKG_FATAL);
+	}
+
+	xasprintf(&keytmp, "%s.XXXXXXXX", sctx->path);
+	xasprintf(&pubpath, "%s.pub", sctx->path);
+	xasprintf(&pubtmp, "%s.XXXXXXXX", pubpath);
+
+	if ((fd = mkstemp(keytmp)) == -1) {
+		pkg_emit_error("failed to create temp file '%s'", keytmp);
+		rc = EPKG_FATAL;
+		goto out;
+	} else if ((fp = fdopen(fd, "we")) == NULL) {
+		close(fd);
+		unlink(keytmp);
+		rc = EPKG_FATAL;
+		goto out;
+	} else if ((keyout = BIO_new_fp(fp, BIO_CLOSE)) == NULL) {
+		fclose(fp);
+		unlink(keytmp);
+		rc = EPKG_FATAL;
+		goto out;
+	}
+
+	if ((fd = mkstemp(pubtmp)) == -1) {
+		pkg_emit_error("failed to create temp file '%s'", pubtmp);
+		rc = EPKG_FATAL;
+		goto out;
+	} else if ((fp = fdopen(fd, "we")) == NULL) {
+		close(fd);
+		unlink(pubtmp);
+		rc = EPKG_FATAL;
+		goto out;
+	} else if ((pubout = BIO_new_fp(fp, BIO_CLOSE)) == NULL) {
+		fclose(fp);
+		unlink(pubtmp);
+		rc = EPKG_FATAL;
+		goto out;
+	}
+
+	/* Will store it in keyinfo->key for saving purposes. */
+	if ((keyinfo->key = EVP_PKEY_new()) == NULL ||
+	    (pkey = RSA_new()) == NULL ||
+		(e = BN_new()) == NULL) {
+		rc = EPKG_FATAL;
+		goto out;
+	}
+
+	bits = OSSL_DEFAULT_RSABITS;
+	if (!BN_set_word(e, RSA_F4)) {
+		/* XXX */
+		rc = EPKG_FATAL;
+		goto out;
+	}
+
+	if (!RSA_generate_key_ex(pkey, bits, e, NULL)) {
+		/* XXX */
+		rc = EPKG_FATAL;
+		goto out;
+	}
+
+	if (!EVP_PKEY_set1_RSA(keyinfo->key, pkey)) {
+		/* XXX */
+		rc = EPKG_FATAL;
+		goto out;
+	} else if (!PEM_write_bio_RSAPrivateKey(keyout, pkey, cipher, NULL, 0,
+	    sctx->pw_cb, NULL)) {
+		/* XXX */
+		rc = EPKG_FATAL;
+		goto out;
+	} else if (!PEM_write_bio_PUBKEY(pubout, keyinfo->key)) {
+		/* XXX */
+		rc = EPKG_FATAL;
+		goto out;
+	}
+
+	BIO_free(pubout);
+	pubout = NULL;
+	rc = rename(pubtmp, pubpath);
+	if (rc != 0) {
+		/* XXX Failed pubkey move. */
+		unlink(pubtmp);
+		rc = EPKG_FATAL;
+		goto out;
+	}
+
+	BIO_free(keyout);
+	keyout = NULL;
+	rc = rename(keytmp, sctx->path);
+	if (rc != 0) {
+		/* XXX Failed pubkey move. */
+		unlink(keytmp);
+		/* Pubkey is worthless now... */
+		unlink(pubpath);
+		rc = EPKG_FATAL;
+		goto out;
+	}
+
+out:
+	free(keytmp);
+	free(pubpath);
+	free(pubtmp);
+	BN_free(e);
+	RSA_free(pkey);
+	if (rc != EPKG_OK)
+		EVP_PKEY_free(keyinfo->key);
+	if (keyout != NULL) {
+		BIO_free(keyout);
+		unlink(keytmp);
+	}
+	if (pubout != NULL) {
+		BIO_free(pubout);
+		unlink(pubtmp);
+	}
+	return (rc);
+}
+
+static int
+ossl_pubkey(struct pkgsign_ctx *sctx, char **pubkey, size_t *pubkeylen)
+{
+	char errbuf[1024];
+	struct ossl_sign_ctx *keyinfo = OSSL_CTX(sctx);
+	BIO *pubout;
+	int rc = EPKG_OK;
+
+	assert(*pubkey == NULL);
+	if (keyinfo->key == NULL && _load_private_key(keyinfo) != EPKG_OK) {
+		pkg_emit_error("can't load key from %s", keyinfo->sctx.path);
+		return (EPKG_FATAL);
+	}
+
+	if ((pubout = BIO_new(BIO_s_mem())) == NULL) {
+		pkg_emit_error("could not allocate BIO");
+		return (EPKG_FATAL);
+	}
+
+	if (!PEM_write_bio_PUBKEY(pubout, keyinfo->key)) {
+		pkg_emit_error("failed to write public key: %s",
+		    ERR_error_string(ERR_get_error(), errbuf));
+		rc = EPKG_FATAL;
+		goto out;
+	}
+
+	*pubkeylen = BIO_get_mem_data(pubout, pubkey);
+out:
+	if (*pubkey == NULL)
+		BIO_set_close(pubout, BIO_CLOSE);
+	else
+		BIO_set_close(pubout, BIO_NOCLOSE);
+	BIO_free(pubout);
+	return (rc);
+}
+
+static int
+ossl_keyinfo(struct pkgsign_ctx *sctx, struct iovec **iov, int *niov)
+{
+	struct ossl_sign_ctx *keyinfo = OSSL_CTX(sctx);
+	RSA *rsa;
+	struct iovec *piov;
+	int bits, cnt;
+
+	assert(*iov == NULL);
+	if (keyinfo->key == NULL && _load_private_key(keyinfo) != EPKG_OK) {
+		pkg_emit_error("can't load key from %s", keyinfo->sctx.path);
+		return (EPKG_FATAL);
+	}
+
+	rsa = EVP_PKEY_get1_RSA(keyinfo->key);
+	cnt = 2;	/* Bits */
+
+	piov = xcalloc(cnt, sizeof(*piov));
+	*iov = piov;
+	*niov = cnt;
+
+#define	IOV_KEY(elem, str) do {		\
+	(elem).iov_base = str;		\
+	(elem).iov_len = sizeof(str);	\
+} while (0);
+
+	IOV_KEY(piov[0], "bits");
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	bits = RSA_bits(rsa);
+#else
+	bits = RSA_size(rsa) * 8;
+#endif
+	piov[1].iov_len = xasprintf((char **)&piov[1].iov_base, "%d", bits);
+
+	RSA_free(rsa);
+
+	return (EPKG_OK);
+}
+
 static int
 ossl_new(const char *name __unused, struct pkgsign_ctx *ctx __unused)
 {
@@ -479,4 +752,8 @@ const struct pkgsign_ops pkgsign_ossl = {
 	.pkgsign_sign = ossl_sign,
 	.pkgsign_verify = ossl_verify,
 	.pkgsign_verify_cert = ossl_verify_cert,
+
+	.pkgsign_generate = ossl_generate,
+	.pkgsign_pubkey = ossl_pubkey,
+	.pkgsign_keyinfo = ossl_keyinfo,
 };
