@@ -508,7 +508,11 @@ typedef enum {
 	/**
 	 * the package already exist
 	 */
-	EPKG_EXIST
+	EPKG_EXIST,
+	/**
+	 * The requested operation is not supported.
+	 */
+	EPKG_OPNOTSUPP,
 } pkg_error_t;
 
 /**
