@@ -268,6 +268,8 @@ struct pkg_ctx {
 
 extern struct pkg_ctx ctx;
 
+struct pkgsign_ctx;
+
 struct pkg_repo_it;
 struct pkg_repo;
 struct pkg_message;
@@ -581,6 +583,10 @@ struct pkg_repo_ops {
 	int (*fetch_pkg)(struct pkg_repo *, struct pkg *);
 	int (*mirror_pkg)(struct pkg_repo *repo, struct pkg *pkg,
 		const char *destdir);
+};
+
+struct pkg_key {
+	struct pkgsign_ctx	*ctx;
 };
 
 typedef enum _pkg_repo_flags {

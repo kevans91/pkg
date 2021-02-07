@@ -90,6 +90,8 @@ extern "C" {
 
 #define EX_NEEDRESTART	4
 
+struct iovec;
+
 struct pkg;
 struct pkg_dep;
 struct pkg_conflict;
@@ -105,6 +107,8 @@ struct pkgdb_it;
 
 struct pkg_jobs;
 struct pkg_solve_problem;
+
+struct pkg_key;
 
 struct pkg_repo;
 
@@ -1491,6 +1495,13 @@ int pkgdb_reanalyse_shlibs(struct pkgdb *, struct pkg *);
 
 void pkgdb_cmd(int argc, char **argv);
 int pkg_sshserve(int fd);
+
+int pkg_key_new(struct pkg_key **key, const char *keytype, const char *keypath,
+    pkg_password_cb *cb);
+int pkg_key_create(struct pkg_key *key, const struct iovec *iov, int niov);
+int pkg_key_pubkey(struct pkg_key *key, char **pubkey, size_t *len);
+int pkg_key_info(struct pkg_key *key, struct iovec **iov, int *niov);
+void pkg_key_free(struct pkg_key *key);
 
 int pkg_repos_total_count(void);
 int pkg_repos_activated_count(void);
