@@ -35,6 +35,7 @@
 
 /* Other parts of libpkg should use pkgsign instead of rsa directly. */
 extern const struct pkgsign_ops	pkgsign_ossl;
+extern const struct pkgsign_ops	pkgsign_asignify;
 
 /*
  * The eventual goal is to allow plugins to register their own pkgsign
@@ -50,6 +51,10 @@ static struct pkgsign_impl {
 	{
 		.pi_name = "rsa",
 		.pi_ops = &pkgsign_ossl,
+	},
+	{
+		.pi_name = "ed25519",
+		.pi_ops = &pkgsign_asignify,
 	},
 };
 
