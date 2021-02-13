@@ -1,0 +1,30 @@
+include @builddir@/mk/defs.mk
+LIB=	asignify
+
+SRCS=	tweetnacl.c \
+	chacha.c \
+	sha2.c \
+	pbkdf2.c \
+	b64_pton.c \
+	databuf.c \
+	generate.c \
+	pubkey.c \
+	verify.c \
+	sign.c \
+	signature.c \
+	encrypt.c \
+	util.c
+
+LOCAL_CFLAGS=	-I$(top_srcdir)/compat -I. -O3
+
+#libasignify_la_LDFLAGS = -version-info @ASIGNIFY_LIBRARY_VERSION@ \
+#			@OPENSSL_LDFLAGS@ \
+#			@OPENSSL_LIBS@ \
+#			@OS_LIBS@
+
+#libasignify_la_CPPFLAGS = -I$(top_srcdir)/include \
+#			@OS_CFLAGS@ \
+#			@OPENSSL_INCLUDES@
+
+include $(MK)/static-lib.mk
+

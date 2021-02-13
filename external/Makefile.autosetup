@@ -1,5 +1,6 @@
 include @builddir@/mk/defs.mk
-DIRS=	blake2 picosat linenoise libfetch sqlite libucl liblua msgpuck yxml
+DIRS=	blake2 picosat libasignify linenoise libfetch sqlite libucl liblua \
+	msgpuck yxml
 @if libmachista
 DIRS+=	libmachista
 @endif
