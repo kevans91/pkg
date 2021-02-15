@@ -1499,7 +1499,7 @@ int pkg_sshserve(int fd);
 int pkg_key_new(struct pkg_key **key, const char *keytype, const char *keypath,
     pkg_password_cb *cb);
 int pkg_key_create(struct pkg_key *key, const struct iovec *iov, int niov);
-int pkg_key_pubkey(struct pkg_key *key, char **pubkey, size_t *len);
+int pkg_key_pubkey(struct pkg_key *key, FILE *);
 int pkg_key_info(struct pkg_key *key, struct iovec **iov, int *niov);
 void pkg_key_free(struct pkg_key *key);
 

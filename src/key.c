@@ -78,16 +78,12 @@ key_create(struct pkg_key *key, int argc __unused, char *argv[] __unused)
 static int
 key_pubout(struct pkg_key *key)
 {
-	char *keybuf = NULL;
-	size_t keylen;
 	int ret;
 
-	ret = pkg_key_pubkey(key, &keybuf, &keylen);
+	ret = pkg_key_pubkey(key, stdout);
 	if (ret != EPKG_OK)
 		return (ret);
 
-	printf("%s", keybuf);
-	free(keybuf);
 	return (0);
 }
 

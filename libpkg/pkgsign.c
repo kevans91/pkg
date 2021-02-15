@@ -179,10 +179,10 @@ pkgsign_keyinfo(struct pkgsign_ctx *ctx, struct iovec **iov, int *niov)
 }
 
 int
-pkgsign_pubkey(struct pkgsign_ctx *ctx, char **pubkey, size_t *pubkeylen)
+pkgsign_pubkey(struct pkgsign_ctx *ctx, FILE *fp)
 {
 
 	if (ctx->impl->pi_ops->pkgsign_pubkey == NULL)
 		return (EPKG_OPNOTSUPP);
-	return (*ctx->impl->pi_ops->pkgsign_pubkey)(ctx, pubkey, pubkeylen);
+	return (*ctx->impl->pi_ops->pkgsign_pubkey)(ctx, fp);
 }

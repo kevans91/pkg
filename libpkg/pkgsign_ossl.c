@@ -696,20 +696,19 @@ out:
 }
 
 static int
-ossl_pubkey(struct pkgsign_ctx *sctx, char **pubkey, size_t *pubkeylen)
+ossl_pubkey(struct pkgsign_ctx *sctx, FILE *fp)
 {
 	char errbuf[1024];
 	struct ossl_sign_ctx *keyinfo = OSSL_CTX(sctx);
 	BIO *pubout;
 	int rc = EPKG_OK;
 
-	assert(*pubkey == NULL);
 	if (keyinfo->key == NULL && _load_private_key(keyinfo) != EPKG_OK) {
 		pkg_emit_error("can't load key from %s", keyinfo->sctx.path);
 		return (EPKG_FATAL);
 	}
 
-	if ((pubout = BIO_new(BIO_s_mem())) == NULL) {
+	if ((pubout = BIO_new_fp(fp, BIO_NOCLOSE)) == NULL) {
 		pkg_emit_error("could not allocate BIO");
 		return (EPKG_FATAL);
 	}
@@ -721,12 +720,7 @@ ossl_pubkey(struct pkgsign_ctx *sctx, char **pubkey, size_t *pubkeylen)
 		goto out;
 	}
 
-	*pubkeylen = BIO_get_mem_data(pubout, pubkey);
 out:
-	if (*pubkey == NULL)
-		BIO_set_close(pubout, BIO_CLOSE);
-	else
-		BIO_set_close(pubout, BIO_NOCLOSE);
 	BIO_free(pubout);
 	return (rc);
 }

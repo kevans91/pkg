@@ -161,13 +161,35 @@ void asignify_sign_free(asignify_sign_t *ctx);
  * @param privkf filename for private key
  * @param pubkf filename for public key
  * @param version version of pair
- * @param rounds rounds of PBKDF
+ * @param rounds rounds of PBKDF (if 0 then private key is not encrypted)
  * @param password_cb password callback (if NULL then private key is not encrypted)
  * @param d opaque data pointer for password
  * @return true if pair has been written successfully
  */
 bool asignify_generate(const char *privkf, const char *pubkf,
 		unsigned int version, unsigned int rounds,
+		asignify_password_cb password_cb, void *d);
+
+/**
+ * Write public key for given private key to an open fd
+ * @param privkf filename for private key
+ * @param fd open fd for public key
+ * @param password_cb password callback
+ * @param d opaque data pointer for password
+ * @return true if pair has been written successfully
+ */
+bool asignify_write_pubkey(const char *privkf, int fd,
+		asignify_password_cb password_cb, void *d);
+
+/**
+ * Regenerate public key for given private key
+ * @param privkf filename for private key
+ * @param pubkf filename for public key
+ * @param password_cb password callback
+ * @param d opaque data pointer for password
+ * @return true if pair has been written successfully
+ */
+bool asignify_generate_pubkey(const char *privkf, const char *pubkf,
 		asignify_password_cb password_cb, void *d);
 
 /**

@@ -109,8 +109,8 @@ pkg_key_info(struct pkg_key *key, struct iovec **iov, int *niov)
 }
 
 int
-pkg_key_pubkey(struct pkg_key *key, char **pubkey, size_t *len)
+pkg_key_pubkey(struct pkg_key *key, FILE *fp)
 {
 
-	return (pkgsign_pubkey(key->ctx, pubkey, len));
+	return (pkgsign_pubkey(key->ctx, fp));
 }

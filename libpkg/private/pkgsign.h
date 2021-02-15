@@ -78,7 +78,7 @@ typedef int pkgsign_keyinfo_cb(struct pkgsign_ctx *, struct iovec **,
     int *);
 
 /* Return the public key. */
-typedef int pkgsign_pubkey_cb(struct pkgsign_ctx *, char **, size_t *);
+typedef int pkgsign_pubkey_cb(struct pkgsign_ctx *, FILE *);
 
 struct pkgsign_ops {
 	/*
@@ -118,6 +118,6 @@ const char *pkgsign_impl_name(const struct pkgsign_ctx *);
 
 int pkgsign_generate(struct pkgsign_ctx *, const struct iovec *, int);
 int pkgsign_keyinfo(struct pkgsign_ctx *, struct iovec **, int *);
-int pkgsign_pubkey(struct pkgsign_ctx *, char **, size_t *);
+int pkgsign_pubkey(struct pkgsign_ctx *, FILE *);
 
 #endif
